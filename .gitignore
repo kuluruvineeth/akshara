@@ -4,10 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-artifacts/
-data/
-logs/
-output/
+/artifacts/
+/data/
+/logs/
+/output/
 
 .env
 .DS_Store
