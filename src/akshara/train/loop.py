@@ -1,10 +1,12 @@
 import json
 import time
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 
@@ -51,10 +53,16 @@ def train(
     device: str | torch.device = "cpu",
     log_path: str | Path | None = None,
     on_log: Callable[[dict], None] | None = None,
+    strategy=None,
 ) -> list[dict]:
-    """Single-device training. Each optimizer step consumes `accumulation` micro-batches of (batch, seq + 1) tokens."""
-    model.to(device).train()
-    optimizer = adamw(model, config)
+    """Training on one device or, with a `strategy` from `akshara.train.parallel`, on every rank of a process group.
+    Each optimizer step consumes `accumulation` micro-batches of (batch, seq + 1) tokens per rank."""
+    from akshara.train.parallel import Single
+
+    strategy = strategy or Single()
+    model = strategy.wrap(model.to(device))
+    optimizer = strategy.optimizer(model, config)
+    model.train()
     device_type = torch.device(device).type
     history, log_file = [], open(log_path, "w") if log_path else None
     started, tokens_seen = time.perf_counter(), 0
@@ -63,21 +71,31 @@ def train(
             lr = wsd(step, config.steps, config.peak_lr, config.warmup_steps, config.decay_fraction)
             for group in optimizer.param_groups:
                 group["lr"] = lr
-            loss_sum = 0.0
-            for _ in range(config.accumulation):
+            loss_sum = torch.zeros((), device=device)
+            for micro in range(config.accumulation):
                 tokens = next(batches).to(device)
-                with torch.autocast(device_type, dtype=torch.bfloat16, enabled=config.bf16):
-                    loss = next_token_loss(model, tokens)
-                (loss / config.accumulation).backward()
-                loss_sum += loss.item()
+                last = micro == config.accumulation - 1
+                with strategy.no_sync(model) if not last else nullcontext():
+                    with torch.autocast(device_type, dtype=torch.bfloat16, enabled=config.bf16):
+                        loss = next_token_loss(model, tokens)
+                    (loss / config.accumulation).backward()
+                loss_sum += loss.detach()
                 tokens_seen += tokens[:, 1:].numel()
+            strategy.before_step()
+            if dist.is_initialized():
+                dist.all_reduce(loss_sum)
+                loss_sum /= dist.get_world_size()
+                tokens_seen_all = tokens_seen * dist.get_world_size()
+            else:
+                tokens_seen_all = tokens_seen
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip).item()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             if step % config.log_every == 0 or step == config.steps - 1:
                 elapsed = time.perf_counter() - started
-                record = {"step": step, "loss": loss_sum / config.accumulation, "lr": lr, "grad_norm": grad_norm,
-                          "tokens": tokens_seen, "tokens_per_second": tokens_seen / elapsed}  # fmt: skip
+                loss_value = loss_sum.item() / config.accumulation
+                record = {"step": step, "loss": loss_value, "lr": lr, "grad_norm": grad_norm,
+                          "tokens": tokens_seen_all, "tokens_per_second": tokens_seen_all / elapsed}  # fmt: skip
                 history.append(record)
                 if log_file:
                     log_file.write(json.dumps(record) + "\n")

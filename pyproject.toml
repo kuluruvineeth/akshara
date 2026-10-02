@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 akshara-tokenizer = "akshara.tokenizer.cli:main"
 akshara-evals = "akshara.evals.freeze:main"
+akshara-train = "akshara.train.cli:main"
 
 [build-system]
 requires = ["hatchling"]
