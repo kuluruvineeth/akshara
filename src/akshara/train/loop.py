@@ -28,16 +28,22 @@ class TrainConfig:
     log_every: int = 10
 
 
-def adamw(model: nn.Module, config: TrainConfig) -> torch.optim.AdamW:
-    """AdamW with weight decay on matrices only: no decay on embeddings (and the tied head) or on norm scales."""
+def parameter_groups(
+    model: nn.Module, config: TrainConfig, keep: Callable[[nn.Parameter], bool] = lambda parameter: True
+) -> list[dict]:
+    """Weight decay on matrices only: no decay on embeddings (and the tied head) or on norm scales."""
     embedding_ids = {id(module.weight) for module in model.modules() if isinstance(module, nn.Embedding)}
     decay, no_decay, seen = [], [], set()
     for parameter in model.parameters():
-        if id(parameter) in seen:
+        if id(parameter) in seen or not keep(parameter):
             continue
         seen.add(id(parameter))
         (decay if parameter.ndim >= 2 and id(parameter) not in embedding_ids else no_decay).append(parameter)
-    groups = [{"params": decay, "weight_decay": config.weight_decay}, {"params": no_decay, "weight_decay": 0.0}]
+    return [{"params": decay, "weight_decay": config.weight_decay}, {"params": no_decay, "weight_decay": 0.0}]
+
+
+def adamw(model: nn.Module, config: TrainConfig) -> torch.optim.AdamW:
+    groups = parameter_groups(model, config)
     return torch.optim.AdamW(groups, lr=config.peak_lr, betas=config.betas, eps=config.eps)
 
 
@@ -54,20 +60,25 @@ def train(
     log_path: str | Path | None = None,
     on_log: Callable[[dict], None] | None = None,
     strategy=None,
+    optimizer=None,
+    start_step: int = 0,
+    on_step: Callable[[int, nn.Module, object], None] | None = None,
 ) -> list[dict]:
     """Training on one device or, with a `strategy` from `akshara.train.parallel`, on every rank of a process group.
-    Each optimizer step consumes `accumulation` micro-batches of (batch, seq + 1) tokens per rank."""
+    Each optimizer step consumes `accumulation` micro-batches of (batch, seq + 1) tokens per rank. With `optimizer`,
+    `model` is taken as already wrapped (a resumed run) and steps continue from `start_step`."""
     from akshara.train.parallel import Single
 
     strategy = strategy or Single()
-    model = strategy.wrap(model.to(device))
-    optimizer = strategy.optimizer(model, config)
+    if optimizer is None:
+        model = strategy.wrap(model.to(device))
+        optimizer = strategy.optimizer(model, config)
     model.train()
     device_type = torch.device(device).type
-    history, log_file = [], open(log_path, "w") if log_path else None
+    history, log_file = [], open(log_path, "a" if start_step else "w") if log_path else None
     started, tokens_seen = time.perf_counter(), 0
     try:
-        for step in range(config.steps):
+        for step in range(start_step, config.steps):
             lr = wsd(step, config.steps, config.peak_lr, config.warmup_steps, config.decay_fraction)
             for group in optimizer.param_groups:
                 group["lr"] = lr
@@ -91,6 +102,8 @@ def train(
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip).item()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+            if on_step:
+                on_step(step, model, optimizer)
             if step % config.log_every == 0 or step == config.steps - 1:
                 elapsed = time.perf_counter() - started
                 loss_value = loss_sum.item() / config.accumulation

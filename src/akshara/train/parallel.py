@@ -4,9 +4,11 @@ from contextlib import contextmanager, nullcontext
 import torch
 import torch.distributed as dist
 from torch import nn
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.fsdp import fully_shard
 from torch.nn.parallel import DistributedDataParallel
 
-from akshara.train.loop import TrainConfig, adamw
+from akshara.train.loop import TrainConfig, adamw, parameter_groups
 
 
 def setup() -> tuple[int, int, torch.device]:
@@ -110,4 +112,65 @@ class TorchDDP(Single):
         return model.no_sync()
 
 
-STRATEGIES = {"single": Single, "hand-ddp": BucketedAllReduce, "ddp": TorchDDP}
+class ZeroOneAdamW:
+    """ZeRO stage 1 by hand: each rank keeps AdamW state only for the parameters it owns, steps those, and broadcasts
+    them to the other ranks. Parameters go to ranks largest first, each to the least-loaded rank."""
+
+    def __init__(self, model: nn.Module, config: TrainConfig):
+        rank, world = dist.get_rank(), dist.get_world_size()
+        loads, self.owner = [0] * world, {}
+        for parameter in sorted(unique_parameters(model), key=lambda p: -p.numel()):
+            self.owner[parameter] = loads.index(min(loads))
+            loads[self.owner[parameter]] += parameter.numel()
+        groups = parameter_groups(model, config, keep=lambda parameter: self.owner[parameter] == rank)
+        self.inner = torch.optim.AdamW(groups, lr=config.peak_lr, betas=config.betas, eps=config.eps)
+        self.param_groups = self.inner.param_groups
+
+    def step(self) -> None:
+        self.inner.step()
+        for parameter, owner in self.owner.items():
+            dist.broadcast(parameter.data, src=owner)
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        for parameter in self.owner:
+            parameter.grad = None if set_to_none else parameter.grad.zero_()
+
+    def state_dict(self) -> dict:
+        return self.inner.state_dict()
+
+    def load_state_dict(self, state: dict) -> None:
+        self.inner.load_state_dict(state)
+
+
+class ZeroOne(BucketedAllReduce):
+    """Gradients averaged as in the hand-written data parallelism; optimizer state sharded."""
+
+    def optimizer(self, model: nn.Module, config: TrainConfig):
+        return ZeroOneAdamW(model, config)
+
+
+class FSDP2(Single):
+    """Parameters, gradients and optimizer state all sharded: each transformer block, then the rest, with
+    `fully_shard`. Blocks gather their weights just in time for forward and backward."""
+
+    def wrap(self, model: nn.Module) -> nn.Module:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        mesh = init_device_mesh(device, (dist.get_world_size(),))
+        for block in model.layers:
+            fully_shard(block, mesh=mesh)
+        fully_shard(model, mesh=mesh)
+        return model
+
+    def no_sync(self, model: nn.Module):
+        @contextmanager
+        def paused():
+            model.set_requires_gradient_sync(False)
+            try:
+                yield
+            finally:
+                model.set_requires_gradient_sync(True)
+
+        return paused()
+
+
+STRATEGIES = {"single": Single, "hand-ddp": BucketedAllReduce, "ddp": TorchDDP, "zero1": ZeroOne, "fsdp2": FSDP2}
