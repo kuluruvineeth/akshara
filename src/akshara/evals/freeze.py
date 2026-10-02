@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from dataflow.pipeline.decont import NgramIndex
 from dataflow.utils.cache import cached_download
 from huggingface_hub import HfApi, get_session, hf_hub_download
 from huggingface_hub.utils import build_hf_headers
 
-from akshara.evals.ngrams import NgramIndex
 from akshara.evals.sets import EVAL_SETS, NOT_FROZEN, EvalSet
 
 PARQUET_LISTING = "https://datasets-server.huggingface.co/parquet?dataset={repo}"
