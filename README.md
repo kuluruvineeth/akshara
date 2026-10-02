@@ -21,6 +21,11 @@ uv run akshara-tokenizer fertility artifacts/tokenizer/tokenizer.json HuggingFac
 
 `fertility` reports tokens per word and bytes per token on the FLORES-200 devtest sets for English and Telugu.
 
+The first version is published as [`kuluruvineeth/akshara-tokenizer-v0`](https://huggingface.co/kuluruvineeth/akshara-tokenizer-v0):
+1.69 tokens per Telugu word and 1.32 per English word. The
+[Telugu Tokenizer Leaderboard](https://huggingface.co/spaces/kuluruvineeth/telugu-tokenizer-leaderboard) compares
+it with 26 other tokenizers.
+
 ## Development
 
 dataflow is used as a local editable dependency, so clone both repositories side by side:

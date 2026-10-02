@@ -2,6 +2,7 @@
 name = "akshara"
 version = "0.1.0"
 description = "An open English + Telugu language model family: data, tokenizer, model, training and evaluation"
+license = "Apache-2.0"
 authors = [
     { name = "Kuluru Vineeth", email = "kuluruvineeth8623@gmail.com" }
 ]
