@@ -11,6 +11,7 @@ dependencies = [
     "dataflow",
     "huggingface-hub>=1.33.0",
     "tokenizers>=0.23.2",
+    "torch>=2.14.1",
 ]
 
 [project.scripts]
@@ -24,6 +25,7 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
+    "transformers>=5.17",
 ]
 
 [tool.ruff]
