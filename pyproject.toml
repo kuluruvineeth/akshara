@@ -10,12 +10,14 @@ requires-python = ">=3.12"
 dependencies = [
     "dataflow",
     "huggingface-hub>=1.33.0",
+    "numpy>=2",
     "tokenizers>=0.23.2",
     "torch>=2.14.1",
 ]
 
 [project.scripts]
 akshara-tokenizer = "akshara.tokenizer.cli:main"
+akshara-evals = "akshara.evals.freeze:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dataflow" },
     { name = "huggingface-hub" },
+    { name = "numpy" },
     { name = "tokenizers" },
     { name = "torch" },
 ]
@@ -24,6 +25,7 @@ dev = [
 requires-dist = [
     { name = "dataflow", editable = "../dataflow" },
     { name = "huggingface-hub", specifier = ">=1.33.0" },
+    { name = "numpy", specifier = ">=2" },
     { name = "tokenizers", specifier = ">=0.23.2" },
     { name = "torch", specifier = ">=2.14.1" },
 ]
