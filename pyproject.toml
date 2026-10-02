@@ -1,0 +1,39 @@
+[project]
+name = "akshara"
+version = "0.1.0"
+description = "An open English + Telugu language model family: data, tokenizer, model, training and evaluation"
+authors = [
+    { name = "Kuluru Vineeth", email = "kuluruvineeth8623@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "dataflow",
+    "huggingface-hub>=1.33.0",
+    "tokenizers>=0.23.2",
+]
+
+[project.scripts]
+akshara-tokenizer = "akshara.tokenizer.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 119
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+dataflow = { path = "../dataflow", editable = true }
