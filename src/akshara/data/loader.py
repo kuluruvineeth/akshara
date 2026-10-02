@@ -18,7 +18,10 @@ class TokenFiles:
             raise FileNotFoundError(f"no .ds files in {folder}")
         metas = [json.loads(Path(f"{path}.meta").read_text()) for path in self.paths]
         self.eos_token_id = metas[0]["eos_token_id"]
-        self.tokens = [np.memmap(path, dtype=f"<u{meta['token_bytes']}", mode="r") for path, meta in zip(self.paths, metas)]
+        self.tokens = [
+            np.memmap(path, dtype=f"<u{meta['token_bytes']}", mode="r")
+            for path, meta in zip(self.paths, metas, strict=True)
+        ]
         self.ends = [np.fromfile(f"{path}.index", dtype="<u8").astype(np.int64) for path in self.paths]
         self.first_document = np.cumsum([0, *(len(ends) for ends in self.ends)])
 
@@ -36,8 +39,8 @@ class PackedLoader:
 
     The buffer holds pieces (length, file, start): documents longer than a row are split into row-sized pieces. A row
     is filled with the longest piece that still fits, again and again; when none fits, the longest piece is cut (long
-    documents are split anyway) and its rest goes back to the buffer, so no token is dropped. `state_dict()` is the stream position plus the buffer,
-    enough to continue with exactly the same batches.
+    documents are split anyway) and its rest goes back to the buffer, so no token is dropped. `state_dict()` is the
+    stream position plus the buffer, enough to continue with exactly the same batches.
     """
 
     def __init__(
